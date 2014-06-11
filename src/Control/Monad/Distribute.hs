@@ -1,4 +1,5 @@
--- {-# language RankNTypes #-}
+{-# language RankNTypes #-}
+{-# language NoMonomorphismRestriction #-}
 
 module Control.Monad.Distribute where
 
@@ -29,10 +30,12 @@ import qualified Control.Monad.Trans.Cont as Cont
 
 import Data.Monoid
 
-import Control.Applicative.Backwards (Backwards (Backwards))
+import Pipes
+
+-- import Control.Applicative.Backwards (Backwards (Backwards))
 
 class MDistribute t where
-    distribute :: (MonadTrans t1, MFunctor t1, Monad (t1 (t m)), Monad m) => t (t1 m) r -> t1 (t m) r
+    distribute :: (MonadTrans t1, MFunctor t1, Monad (t1 (t m)), Monad m, Monad (t1 m) ) => t (t1 m) r -> t1 (t m) r
 
 
 instance MDistribute (S.StateT s) where
@@ -234,3 +237,37 @@ test = do
     lift $ S.modify (+1)
     s <- lift $ S.get
     return (a, b, s)
+
+catchState m h = do
+    s <- S.get
+    S.StateT $ do
+        x <- S.runStateT m s
+        (a, s) <-  h x
+        S.runStateT (return a) s
+
+catchState' m h = do
+    s <- S.get
+    S.runStateT m (h s)
+
+collect ::
+  (Monad (g (f n)), Monad m, Monad n, MonadTrans g,
+      MFunctor g, MFunctor f, MDistribute f
+    , Monad (g n)) => -- to get Pipes.Lift.distribute to work
+     (forall a . m a -> g n a) ->
+     f m a -> g (f n) a
+collect f = distribute . hoist f
+
+cotraverse
+  :: (Monad (f m), Monad (g (f m)), Monad m, MonadTrans g,
+      MFunctor g, MDistribute f
+      , Monad (g m) ) => -- to get Pipes.Lift.distribute to work
+     (forall a . f m a -> n a) ->
+     f (g m) a -> g n a
+cotraverse f = hoist f . distribute
+
+ts = go
+  where
+    go = do
+        s <- S.get
+        lift (yield s)
+        go
